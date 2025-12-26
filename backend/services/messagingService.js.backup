@@ -1,0 +1,165 @@
+const twilio = require('twilio');
+const db = require('../config/db');
+
+// Twilio client - will be initialized with credentials
+let twilioClient = null;
+
+// Initialize Twilio client
+const getTwilioClient = () => {
+  if (!twilioClient) {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    
+    if (accountSid && authToken) {
+      twilioClient = twilio(accountSid, authToken);
+    }
+  }
+  return twilioClient;
+};
+
+// Create email transporter with school-specific or default settings
+const createTransporter = (smtpEmail = null, smtpPassword = null) => {
+  // Use school's email settings if provided, otherwise fall back to environment variables
+  const config = {
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT) || 587,
+    secure: false, // true for 465, false for other ports
+    auth: {
+      user: smtpEmail || process.env.SMTP_USER,
+      pass: smtpPassword || process.env.SMTP_PASSWORD
+    }
+  };
+
+  return nodemailer.createTransport(config);
+};
+
+// Get school's email settings from database
+const getSchoolEmailSettings = async (schoolId) => {
+  try {
+    const [schools] = await db.query(
+      'SELECT school_name, smtp_email, smtp_password FROM schools WHERE id = ?',
+      [schoolId]
+    );
+    
+    if (schools.length > 0 && schools[0].smtp_email && schools[0].smtp_password) {
+      return {
+        schoolName: schools[0].school_name,
+        smtpEmail: schools[0].smtp_email,
+        smtpPassword: schools[0].smtp_password
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error('Error getting school email settings:', error);
+    return null;
+  }
+};
+
+// Generate message template
+const getMessageTemplate = (studentName, date, status, schoolName) => {
+  const formattedDate = new Date(date).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric'
+  });
+
+  return {
+    subject: `Attendance Alert: ${studentName} - ${formattedDate}`,
+    whatsapp: `🔔 *This is sample message from ANUJ DAFURE\n attendance Alert*\n\nDear Parent,\n\n${studentName} was marked as *${status.toUpperCase()}* on ${formattedDate}.\n\nIf this is incorrect, please contact the school.\n\n- ${schoolName || 'School Administration'}`
+  };
+};
+
+// Log message to database
+const logMessage = async (studentId, recipient, subject, content, status, sentBy, attendanceDate, messageType = 'whatsapp', errorMessage = null) => {
+  try {
+    const [result] = await db.query(
+      `INSERT INTO message_logs 
+       (student_id, message_type, recipient, subject, message_content, status, sent_by, attendance_date, error_message) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [studentId, messageType, recipient, subject, content, status, sentBy, attendanceDate, errorMessage]
+    );
+    return result.insertId;
+  } catch (error) {
+    console.error('Error logging message:', error);
+    throw error;
+  }
+};
+
+// Format phone number for WhatsApp
+const formatPhoneForWhatsApp = (phone) => {
+  // Remove spaces, dashes, and other characters
+  let cleaned = phone.replace(/[\s\-\(\)]/g, '');
+  
+  // If doesn't start with +, assume Indian number and add +91
+  if (!cleaned.startsWith('+')) {
+    // Remove leading 0 if present
+    if (cleaned.startsWith('0')) {
+      cleaned = cleaned.substring(1);
+    }
+    // Add India country code if it's a 10-digit number
+    if (cleaned.length === 10) {
+      cleaned = '+91' + cleaned;
+    } else if (!cleaned.startsWith('91') && cleaned.length === 10) {
+      cleaned = '+91' + cleaned;
+    } else if (cleaned.startsWith('91') && cleaned.length === 12) {
+      cleaned = '+' + cleaned;
+    }
+  }
+  
+  return cleaned;
+};
+
+// Send WhatsApp message via Twilio
+const sendWhatsApp = async (to, message) => {
+  try {
+    const client = getTwilioClient();
+    
+    if (!client) {
+      return { success: false, error: 'Twilio not configured' };
+    }
+
+    const fromNumber = process.env.TWILIO_WHATSAPP_NUMBER || 'whatsapp:+14155238886';
+    const formattedTo = formatPhoneForWhatsApp(to);
+    
+    const result = await client.messages.create({
+      from: fromNumber.startsWith('whatsapp:') ? fromNumber : `whatsapp:${fromNumber}`,
+      to: `whatsapp:${formattedTo}`,
+      body: message
+    });
+
+    return { success: true, messageId: result.sid };
+  } catch (error) {
+    console.error('WhatsApp send error:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+// Main function to send absent notification via WhatsApp
+const sendAbsentNotification = async (studentId, studentName, parentPhone, date, schoolName, sentBy, schoolId = null) => {
+  const template = getMessageTemplate(studentName, date, 'absent', schoolName);
+  
+  const result = await sendWhatsApp(parentPhone, template.whatsapp);
+  
+  // Log the message
+  await logMessage(
+    studentId,
+    parentPhone,
+    template.subject,
+    template.whatsapp,
+    result.success ? 'sent' : 'failed',
+    sentBy,
+    date,
+    'whatsapp',
+    result.success ? null : result.error
+  );
+
+  return result;
+};
+
+module.exports = {
+  sendWhatsApp,
+  sendAbsentNotification,
+  getMessageTemplate,
+  logMessage,
+  formatPhoneForWhatsApp
+};
