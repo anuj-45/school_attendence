@@ -3,8 +3,8 @@ const db = require('../config/db');
 // Check if any school is registered
 const checkSchoolExists = async (req, res) => {
   try {
-    const [schools] = await db.query('SELECT COUNT(*) as count FROM schools');
-    res.json({ exists: schools[0].count > 0 });
+    const result = await db.query('SELECT COUNT(*) as count FROM schools');
+    res.json({ exists: parseInt(result.rows[0].count) > 0 });
   } catch (error) {
     console.error('Check school exists error:', error);
     res.status(500).json({ error: 'Failed to check school registration' });
@@ -32,27 +32,27 @@ const registerSchool = async (req, res) => {
     }
 
     // Check if UDISE code already exists
-    const [existing] = await db.query('SELECT id FROM schools WHERE udise_code = ?', [udise_code]);
-    if (existing.length > 0) {
+    const existing = await db.query('SELECT id FROM schools WHERE udise_code = $1', [udise_code]);
+    if (existing.rows.length > 0) {
       return res.status(409).json({ error: 'School with this UDISE code already registered' });
     }
 
     // Insert new school with email settings
-    const [result] = await db.query(
-      'INSERT INTO schools (school_name, udise_code, principal, smtp_email, smtp_password) VALUES (?, ?, ?, ?, ?)',
+    const result = await db.query(
+      'INSERT INTO schools (school_name, udise_code, principal, smtp_email, smtp_password) VALUES ($1, $2, $3, $4, $5) RETURNING id',
       [school_name, udise_code, principal, smtp_email || null, smtp_password || null]
     );
 
     res.status(201).json({
       message: 'School registered successfully',
-      school_id: result.insertId,
+      school_id: result.rows[0].id,
       school_name,
       udise_code
     });
   } catch (error) {
     console.error('Register school error:', error);
     
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') { // PostgreSQL unique violation
       return res.status(409).json({ error: 'School with this UDISE code already registered' });
     }
     
@@ -65,16 +65,16 @@ const getSchoolByUdise = async (req, res) => {
   try {
     const { udise_code } = req.params;
 
-    const [schools] = await db.query(
-      'SELECT id, school_name, udise_code, principal, created_at FROM schools WHERE udise_code = ?',
+    const result = await db.query(
+      'SELECT id, school_name, udise_code, principal, created_at FROM schools WHERE udise_code = $1',
       [udise_code]
     );
 
-    if (schools.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'School not found' });
     }
 
-    res.json(schools[0]);
+    res.json(result.rows[0]);
   } catch (error) {
     console.error('Get school error:', error);
     res.status(500).json({ error: 'Failed to retrieve school details' });
@@ -84,11 +84,11 @@ const getSchoolByUdise = async (req, res) => {
 // Get all registered schools (for admin purposes if needed)
 const getAllSchools = async (req, res) => {
   try {
-    const [schools] = await db.query(
+    const result = await db.query(
       'SELECT id, school_name, udise_code, principal, created_at FROM schools ORDER BY school_name'
     );
 
-    res.json(schools);
+    res.json(result.rows);
   } catch (error) {
     console.error('Get all schools error:', error);
     res.status(500).json({ error: 'Failed to retrieve schools' });

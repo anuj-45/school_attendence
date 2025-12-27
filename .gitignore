@@ -2,3 +2,4 @@ twilio_recovery_code.txt
 twilio_test.py
 .env
 .env.example
+fronend/.env 

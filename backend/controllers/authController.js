@@ -12,25 +12,25 @@ const login = async (req, res) => {
     }
 
     // First, find the school by UDISE code
-    const [schools] = await db.query('SELECT id, school_name FROM schools WHERE udise_code = ?', [udise_code]);
+    const schoolsResult = await db.query('SELECT id, school_name FROM schools WHERE udise_code = $1', [udise_code]);
     
-    if (schools.length === 0) {
+    if (schoolsResult.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid school UDISE code' });
     }
 
-    const school = schools[0];
+    const school = schoolsResult.rows[0];
 
     // Find user in that specific school
-    const [users] = await db.query(
-      'SELECT * FROM users WHERE username = ? AND school_id = ?', 
+    const usersResult = await db.query(
+      'SELECT * FROM users WHERE username = $1 AND school_id = $2', 
       [username, school.id]
     );
 
-    if (users.length === 0) {
+    if (usersResult.rows.length === 0) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    const user = users[0];
+    const user = usersResult.rows[0];
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {
@@ -65,16 +65,16 @@ const login = async (req, res) => {
 // Get current user info
 const getCurrentUser = async (req, res) => {
   try {
-    const [users] = await db.query(
-      'SELECT u.id, u.username, u.full_name, u.email, u.role, u.school_id, s.school_name FROM users u LEFT JOIN schools s ON u.school_id = s.id WHERE u.id = ?',
+    const result = await db.query(
+      'SELECT u.id, u.username, u.full_name, u.email, u.role, u.school_id, s.school_name FROM users u LEFT JOIN schools s ON u.school_id = s.id WHERE u.id = $1',
       [req.user.id]
     );
 
-    if (users.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json(users[0]);
+    res.json(result.rows[0]);
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -91,19 +91,19 @@ const checkAdminExists = async (req, res) => {
     }
 
     // Find school
-    const [schools] = await db.query('SELECT id FROM schools WHERE udise_code = ?', [udise_code]);
+    const schoolsResult = await db.query('SELECT id FROM schools WHERE udise_code = $1', [udise_code]);
     
-    if (schools.length === 0) {
+    if (schoolsResult.rows.length === 0) {
       return res.status(404).json({ error: 'School not found' });
     }
 
     // Check for admin in this school
-    const [admins] = await db.query(
-      'SELECT COUNT(*) as count FROM users WHERE role = ? AND school_id = ?', 
-      ['admin', schools[0].id]
+    const adminsResult = await db.query(
+      'SELECT COUNT(*) as count FROM users WHERE role = $1 AND school_id = $2', 
+      ['admin', schoolsResult.rows[0].id]
     );
     
-    res.json({ adminExists: admins[0].count > 0 });
+    res.json({ adminExists: parseInt(adminsResult.rows[0].count) > 0 });
   } catch (error) {
     console.error('Check admin error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -120,26 +120,26 @@ const createFirstAdmin = async (req, res) => {
     }
 
     // Find school
-    const [schools] = await db.query('SELECT id FROM schools WHERE udise_code = ?', [udise_code]);
+    const schoolsResult = await db.query('SELECT id FROM schools WHERE udise_code = $1', [udise_code]);
     
-    if (schools.length === 0) {
+    if (schoolsResult.rows.length === 0) {
       return res.status(404).json({ error: 'School not found. Please register your school first.' });
     }
 
-    const school_id = schools[0].id;
+    const school_id = schoolsResult.rows[0].id;
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const [result] = await db.query(
-      'INSERT INTO users (school_id, username, password, full_name, email, role) VALUES (?, ?, ?, ?, ?, ?)',
+    const result = await db.query(
+      'INSERT INTO users (school_id, username, password, full_name, email, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
       [school_id, username, hashedPassword, full_name, email, 'admin']
     );
 
     res.status(201).json({ 
       message: 'Admin account created successfully. Please login.',
-      userId: result.insertId 
+      userId: result.rows[0].id 
     });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') {
       return res.status(400).json({ error: 'Username already exists in your school' });
     }
     console.error('Create admin error:', error);
@@ -157,25 +157,25 @@ const resetPassword = async (req, res) => {
     }
 
     // Find school
-    const [schools] = await db.query('SELECT id FROM schools WHERE udise_code = ?', [udise_code]);
+    const schoolsResult = await db.query('SELECT id FROM schools WHERE udise_code = $1', [udise_code]);
     
-    if (schools.length === 0) {
+    if (schoolsResult.rows.length === 0) {
       return res.status(404).json({ error: 'School not found with this UDISE code' });
     }
 
-    const school_id = schools[0].id;
+    const school_id = schoolsResult.rows[0].id;
 
     // Find user
-    const [users] = await db.query(
-      'SELECT id, full_name, role FROM users WHERE username = ? AND school_id = ?',
+    const usersResult = await db.query(
+      'SELECT id, full_name, role FROM users WHERE username = $1 AND school_id = $2',
       [username, school_id]
     );
 
-    if (users.length === 0) {
+    if (usersResult.rows.length === 0) {
       return res.status(404).json({ error: 'User not found with this username' });
     }
 
-    const user = users[0];
+    const user = usersResult.rows[0];
 
     // Generate temporary password (username + last 4 digits of timestamp)
     const tempPassword = username + Math.floor(Math.random() * 10000).toString().padStart(4, '0');
@@ -183,7 +183,7 @@ const resetPassword = async (req, res) => {
 
     // Update password
     await db.query(
-      'UPDATE users SET password = ? WHERE id = ?',
+      'UPDATE users SET password = $1 WHERE id = $2',
       [hashedPassword, user.id]
     );
 

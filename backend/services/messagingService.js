@@ -21,16 +21,16 @@ const createTransporter = async (smtpEmail = null, smtpPassword = null) => {
 // Get school's email settings from database
 const getSchoolEmailSettings = async (schoolId) => {
   try {
-    const [schools] = await db.query(
-      'SELECT school_name, smtp_email, smtp_password FROM schools WHERE id = ?',
+    const result = await db.query(
+      'SELECT school_name, smtp_email, smtp_password FROM schools WHERE id = $1',
       [schoolId]
     );
     
-    if (schools.length > 0 && schools[0].smtp_email && schools[0].smtp_password) {
+    if (result.rows.length > 0 && result.rows[0].smtp_email && result.rows[0].smtp_password) {
       return {
-        schoolName: schools[0].school_name,
-        smtpEmail: schools[0].smtp_email,
-        smtpPassword: schools[0].smtp_password
+        schoolName: result.rows[0].school_name,
+        smtpEmail: result.rows[0].smtp_email,
+        smtpPassword: result.rows[0].smtp_password
       };
     }
     return null;
@@ -98,13 +98,13 @@ If this is incorrect, please contact the school.
 // Log message to database
 const logMessage = async (studentId, recipient, subject, content, status, sentBy, attendanceDate, messageType = 'email', errorMessage = null) => {
   try {
-    const [result] = await db.query(
+    const result = await db.query(
       `INSERT INTO message_logs 
        (student_id, message_type, recipient, subject, message_content, status, sent_by, attendance_date, error_message) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
       [studentId, messageType, recipient, subject, content, status, sentBy, attendanceDate, errorMessage]
     );
-    return result.insertId;
+    return result.rows[0].id;
   } catch (error) {
     console.error('Error logging message:', error);
     throw error;
