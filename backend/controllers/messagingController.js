@@ -17,33 +17,36 @@ const getAbsentStudents = async (req, res) => {
       SELECT 
         s.id, s.name, s.roll_number, s.parent_email, s.parent_contact,
         c.standard, c.section, ar.status, ar.attendance_date,
-        IFNULL(ml.id, 0) as message_sent
+        COALESCE(ml.id, 0) as message_sent
       FROM students s
       JOIN classes c ON s.class_id = c.id
-      LEFT JOIN attendance_records ar ON s.id = ar.student_id AND ar.attendance_date = ?
-      LEFT JOIN message_logs ml ON s.id = ml.student_id AND ml.attendance_date = ?
-      WHERE ar.status = 'absent' AND c.school_id = ?
+      LEFT JOIN attendance_records ar ON s.id = ar.student_id AND ar.attendance_date = $1
+      LEFT JOIN message_logs ml ON s.id = ml.student_id AND ml.attendance_date = $2
+      WHERE ar.status = 'absent' AND c.school_id = $3
     `;
 
     const params = [date, date, schoolId];
+    let paramIndex = 4;
 
     // If teacher, only show their class students
     if (userRole === 'teacher') {
-      query += ` AND c.teacher_id = ?`;
+      query += ` AND c.teacher_id = $${paramIndex}`;
       params.push(userId);
+      paramIndex++;
     } else if (class_id) {
-      query += ` AND c.id = ?`;
+      query += ` AND c.id = $${paramIndex}`;
       params.push(class_id);
+      paramIndex++;
     }
 
     query += ` ORDER BY s.roll_number`;
 
-    const [students] = await db.query(query, params);
+    const result = await db.query(query, params);
 
     res.json({
       date,
-      count: students.length,
-      students
+      count: result.rows.length,
+      students: result.rows
     });
   } catch (error) {
     console.error('Get absent students error:', error);
@@ -67,22 +70,23 @@ const sendNotifications = async (req, res) => {
     }
 
     // Get school name and ID for the logged-in user
-    const [userSchool] = await db.query(
-      'SELECT s.id, s.school_name FROM schools s JOIN users u ON s.id = u.school_id WHERE u.id = ?',
+    const userSchoolResult = await db.query(
+      'SELECT s.id, s.school_name FROM schools s JOIN users u ON s.id = u.school_id WHERE u.id = $1',
       [userId]
     );
-    const schoolName = userSchool[0]?.school_name || 'School Administration';
-    const schoolId = userSchool[0]?.id;
+    const schoolName = userSchoolResult.rows[0]?.school_name || 'School Administration';
+    const schoolId = userSchoolResult.rows[0]?.id;
 
     // Get students with their parent email addresses
     let query = `
       SELECT s.id, s.name, s.parent_email, c.teacher_id, c.school_id
       FROM students s
       JOIN classes c ON s.class_id = c.id
-      WHERE s.id IN (?)
+      WHERE s.id = ANY($1)
     `;
 
-    const [students] = await db.query(query, [student_ids]);
+    const studentsResult = await db.query(query, [student_ids]);
+    const students = studentsResult.rows;
 
     // Security check: Verify all students belong to the user's school
     const unauthorizedBySchool = students.find(s => s.school_id !== schoolId);
@@ -181,40 +185,46 @@ const getMessageHistory = async (req, res) => {
     `;
 
     const params = [];
+    let paramIndex = 1;
 
     // If teacher, only show messages they sent or for their class
     if (userRole === 'teacher') {
-      query += ` AND (ml.sent_by = ? OR c.teacher_id = ?)`;
+      query += ` AND (ml.sent_by = $${paramIndex} OR c.teacher_id = $${paramIndex + 1})`;
       params.push(userId, userId);
+      paramIndex += 2;
     }
 
     if (start_date) {
-      query += ` AND ml.attendance_date >= ?`;
+      query += ` AND ml.attendance_date >= $${paramIndex}`;
       params.push(start_date);
+      paramIndex++;
     }
 
     if (end_date) {
-      query += ` AND ml.attendance_date <= ?`;
+      query += ` AND ml.attendance_date <= $${paramIndex}`;
       params.push(end_date);
+      paramIndex++;
     }
 
     if (student_id) {
-      query += ` AND ml.student_id = ?`;
+      query += ` AND ml.student_id = $${paramIndex}`;
       params.push(student_id);
+      paramIndex++;
     }
 
     if (status) {
-      query += ` AND ml.status = ?`;
+      query += ` AND ml.status = $${paramIndex}`;
       params.push(status);
+      paramIndex++;
     }
 
     query += ` ORDER BY ml.sent_at DESC LIMIT 100`;
 
-    const [messages] = await db.query(query, params);
+    const result = await db.query(query, params);
 
     res.json({
-      count: messages.length,
-      messages
+      count: result.rows.length,
+      messages: result.rows
     });
   } catch (error) {
     console.error('Get message history error:', error);

@@ -29,7 +29,7 @@ A complete web-based system to automate school attendance tracking and report ca
 
 ### Backend
 - Node.js with Express.js
-- MySQL database
+- PostgreSQL database
 - JWT authentication
 - bcrypt for password hashing
 
@@ -43,7 +43,7 @@ A complete web-based system to automate school attendance tracking and report ca
 
 ### Prerequisites
 - Node.js (v14 or higher)
-- MySQL (v8 or higher)
+- PostgreSQL (v12 or higher)
 - npm or yarn
 
 ### Backend Setup
@@ -72,39 +72,40 @@ nano .env
 # Or use any text editor like gedit, vim, code
 ```
 
-5. Configure `.env` file with your MySQL credentials:
+5. Configure `.env` file with your PostgreSQL credentials:
 ```env
 PORT=5000
-DB_HOST=localhost
-DB_USER=root
-DB_PASSWORD=your_mysql_password
-DB_NAME=school_attendance
+SERVER_PORT=5000
+DATABASE_URL=postgresql://username:password@localhost:5432/school_attendance
 JWT_SECRET=change_this_to_a_random_secret_key
 ```
 
-6. Install MySQL (if not installed):
+Replace `username` and `password` with your PostgreSQL credentials.
+
+6. Install PostgreSQL (if not installed):
 ```bash
 sudo apt update
-sudo apt install mysql-server
-sudo systemctl start mysql
-sudo systemctl enable mysql
-sudo mysql_secure_installation  # Optional but recommended
+sudo apt install postgresql postgresql-contrib
+sudo systemctl start postgresql
+sudo systemctl enable postgresql
 ```
 
 7. Create database and run schema:
 ```bash
-# Login to MySQL
-sudo mysql -u root -p
+# Switch to postgres user
+sudo -u postgres psql
 
-# In MySQL prompt, run:
+# In PostgreSQL prompt, run:
 CREATE DATABASE school_attendance;
-exit
+CREATE USER your_username WITH PASSWORD 'your_password';
+GRANT ALL PRIVILEGES ON DATABASE school_attendance TO your_username;
+\q
 
 # Import schema from terminal
-sudo mysql -u root -p school_attendance < database/schema.sql
+psql -U your_username -d school_attendance -f database/schema.sql
 
-# Or if using non-root MySQL user:
-mysql -u your_username -p school_attendance < database/schema.sql
+# Or if you prefer using the postgres superuser:
+sudo -u postgres psql school_attendance < database/schema.sql
 ```
 
 8. Generate proper admin password hash:

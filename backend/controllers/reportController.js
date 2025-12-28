@@ -11,31 +11,33 @@ const getStudentAttendance = async (req, res) => {
     }
 
     // Get student info
-    const [students] = await db.query(
-      'SELECT s.*, c.standard, c.section FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = ?',
+    const studentsResult = await db.query(
+      'SELECT s.*, c.standard, c.section FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1',
       [student_id]
     );
 
-    if (students.length === 0) {
+    if (studentsResult.rows.length === 0) {
       return res.status(404).json({ error: 'Student not found' });
     }
 
-    const student = students[0];
+    const student = studentsResult.rows[0];
 
     // Get attendance records
-    const [records] = await db.query(
-      'SELECT status, COUNT(*) as count FROM attendance_records WHERE student_id = ? AND attendance_date BETWEEN ? AND ? GROUP BY status',
+    const recordsResult = await db.query(
+      'SELECT status, COUNT(*) as count FROM attendance_records WHERE student_id = $1 AND attendance_date BETWEEN $2 AND $3 GROUP BY status',
       [student_id, start_date, end_date]
     );
 
+    const records = recordsResult.rows;
+
     // Get holidays count
     const yearToUse = academic_year || student.academic_year;
-    const [holidays] = await db.query(
-      'SELECT COUNT(*) as count FROM holidays WHERE academic_year = ? AND holiday_date BETWEEN ? AND ?',
+    const holidaysResult = await db.query(
+      'SELECT COUNT(*) as count FROM holidays WHERE academic_year = $1 AND holiday_date BETWEEN $2 AND $3',
       [yearToUse, start_date, end_date]
     );
 
-    const holidayCount = holidays[0].count;
+    const holidayCount = parseInt(holidaysResult.rows[0].count);
 
     // Calculate total days
     const startDate = new Date(start_date);
@@ -109,40 +111,44 @@ const getClassMonthlyReport = async (req, res) => {
     const endDateStr = endDate.toISOString().split('T')[0];
 
     // Get all students in class
-    const [students] = await db.query(
-      'SELECT * FROM students WHERE class_id = ? ORDER BY roll_number',
+    const studentsResult = await db.query(
+      'SELECT * FROM students WHERE class_id = $1 ORDER BY roll_number',
       [class_id]
     );
+
+    const students = studentsResult.rows;
 
     // Get class info
-    const [classes] = await db.query(
-      'SELECT * FROM classes WHERE id = ?',
+    const classesResult = await db.query(
+      'SELECT * FROM classes WHERE id = $1',
       [class_id]
     );
 
-    if (classes.length === 0) {
+    if (classesResult.rows.length === 0) {
       return res.status(404).json({ error: 'Class not found' });
     }
 
-    const classInfo = classes[0];
+    const classInfo = classesResult.rows[0];
 
     // Get holidays
-    const [holidays] = await db.query(
-      'SELECT COUNT(*) as count FROM holidays WHERE academic_year = ? AND holiday_date BETWEEN ? AND ?',
+    const holidaysResult = await db.query(
+      'SELECT COUNT(*) as count FROM holidays WHERE academic_year = $1 AND holiday_date BETWEEN $2 AND $3',
       [classInfo.academic_year, startDateStr, endDateStr]
     );
 
-    const holidayCount = holidays[0].count;
+    const holidayCount = parseInt(holidaysResult.rows[0].count);
     const totalDays = endDate.getDate();
     const totalSchoolDays = totalDays - holidayCount;
 
     // Get attendance for all students
     const report = [];
     for (const student of students) {
-      const [records] = await db.query(
-        'SELECT status, COUNT(*) as count FROM attendance_records WHERE student_id = ? AND attendance_date BETWEEN ? AND ? GROUP BY status',
+      const recordsResult = await db.query(
+        'SELECT status, COUNT(*) as count FROM attendance_records WHERE student_id = $1 AND attendance_date BETWEEN $2 AND $3 GROUP BY status',
         [student.id, startDateStr, endDateStr]
       );
+
+      const records = recordsResult.rows;
 
       let presentCount = 0;
       let lateCount = 0;
@@ -214,19 +220,19 @@ const getStudentYearlyReport = async (req, res) => {
     console.log('Date range:', { startDate, endDate });
 
     // Get student info
-    const [students] = await db.query(
-      'SELECT s.*, c.standard, c.section FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = ?',
+    const studentsResult = await db.query(
+      'SELECT s.*, c.standard, c.section FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1',
       [student_id]
     );
 
-    if (students.length === 0) {
+    if (studentsResult.rows.length === 0) {
       console.log('Student not found:', student_id);
       return res.status(404).json({ error: 'Student not found' });
     }
 
-    console.log('Student found:', students[0].name);
+    console.log('Student found:', studentsResult.rows[0].name);
 
-    const student = students[0];
+    const student = studentsResult.rows[0];
 
     // Get monthly breakdown
     const monthlyData = [];
@@ -246,17 +252,19 @@ const getStudentYearlyReport = async (req, res) => {
         continue;
       }
 
-      const [records] = await db.query(
-        'SELECT status, COUNT(*) as count FROM attendance_records WHERE student_id = ? AND attendance_date BETWEEN ? AND ? GROUP BY status',
+      const recordsResult = await db.query(
+        'SELECT status, COUNT(*) as count FROM attendance_records WHERE student_id = $1 AND attendance_date BETWEEN $2 AND $3 GROUP BY status',
         [student_id, monthStartStr, monthEndStr]
       );
 
-      const [holidays] = await db.query(
-        'SELECT COUNT(*) as count FROM holidays WHERE academic_year = ? AND holiday_date BETWEEN ? AND ?',
+      const records = recordsResult.rows;
+
+      const holidaysResult = await db.query(
+        'SELECT COUNT(*) as count FROM holidays WHERE academic_year = $1 AND holiday_date BETWEEN $2 AND $3',
         [academic_year, monthStartStr, monthEndStr]
       );
 
-      const holidayCount = holidays[0].count;
+      const holidayCount = parseInt(holidaysResult.rows[0].count);
       const totalDays = monthEnd.getDate();
       const totalSchoolDays = totalDays - holidayCount;
 
@@ -344,27 +352,29 @@ const getDailyAttendance = async (req, res) => {
     }
 
     // Get class info
-    const [classes] = await db.query(
-      'SELECT * FROM classes WHERE id = ?',
+    const classesResult = await db.query(
+      'SELECT * FROM classes WHERE id = $1',
       [class_id]
     );
 
-    if (classes.length === 0) {
+    if (classesResult.rows.length === 0) {
       return res.status(404).json({ error: 'Class not found' });
     }
 
-    const classInfo = classes[0];
+    const classInfo = classesResult.rows[0];
 
     // Get all students in the class with their attendance for the date
-    const [students] = await db.query(
+    const studentsResult = await db.query(
       `SELECT s.id, s.roll_number, s.name, s.gender,
         COALESCE(ar.status, 'unmarked') as status
        FROM students s
-       LEFT JOIN attendance_records ar ON s.id = ar.student_id AND ar.attendance_date = ?
-       WHERE s.class_id = ?
+       LEFT JOIN attendance_records ar ON s.id = ar.student_id AND ar.attendance_date = $1
+       WHERE s.class_id = $2
        ORDER BY s.roll_number`,
       [date, class_id]
     );
+
+    const students = studentsResult.rows;
 
     // Calculate overall statistics
     let totalPresent = 0;
@@ -485,14 +495,16 @@ const getClassYearlyReport = async (req, res) => {
     }
 
     // Get all students in the class
-    const [students] = await db.query(
+    const studentsResult = await db.query(
       `SELECT s.id as student_id, s.roll_number, s.name, c.standard, c.section, c.school_id
        FROM students s
        JOIN classes c ON s.class_id = c.id
-       WHERE s.class_id = ? AND s.academic_year = ?
+       WHERE s.class_id = $1 AND s.academic_year = $2
        ORDER BY s.roll_number`,
       [class_id, academic_year]
     );
+
+    const students = studentsResult.rows;
 
     if (students.length === 0) {
       return res.json({ students: [] });
@@ -506,11 +518,11 @@ const getClassYearlyReport = async (req, res) => {
     const endDate = `${startYear + 1}-03-31`;
 
     // Get holidays count
-    const [holidays] = await db.query(
-      'SELECT COUNT(*) as count FROM holidays WHERE school_id = ? AND academic_year = ? AND holiday_date BETWEEN ? AND ?',
+    const holidaysResult = await db.query(
+      'SELECT COUNT(*) as count FROM holidays WHERE school_id = $1 AND academic_year = $2 AND holiday_date BETWEEN $3 AND $4',
       [school_id, academic_year, startDate, endDate]
     );
-    const holidayCount = holidays[0].count;
+    const holidayCount = parseInt(holidaysResult.rows[0].count);
 
     // Calculate total school days
     const start = new Date(startDate);
@@ -520,13 +532,15 @@ const getClassYearlyReport = async (req, res) => {
 
     // Get attendance for all students
     const studentIds = students.map(s => s.student_id);
-    const [attendanceRecords] = await db.query(
+    const attendanceRecordsResult = await db.query(
       `SELECT student_id, status, COUNT(*) as count
        FROM attendance_records
-       WHERE student_id IN (?) AND attendance_date BETWEEN ? AND ?
+       WHERE student_id = ANY($1) AND attendance_date BETWEEN $2 AND $3
        GROUP BY student_id, status`,
       [studentIds, startDate, endDate]
     );
+
+    const attendanceRecords = attendanceRecordsResult.rows;
 
     // Process attendance data for each student
     const studentsWithAttendance = students.map(student => {

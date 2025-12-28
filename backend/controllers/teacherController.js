@@ -3,16 +3,16 @@ const db = require('../config/db');
 // Get teacher's assigned class
 const getMyClass = async (req, res) => {
   try {
-    const [classes] = await db.query(
-      'SELECT * FROM classes WHERE teacher_id = ?',
+    const result = await db.query(
+      'SELECT * FROM classes WHERE teacher_id = $1',
       [req.user.id]
     );
 
-    if (classes.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'No class assigned to you' });
     }
 
-    res.json(classes[0]);
+    res.json(result.rows[0]);
   } catch (error) {
     console.error('Get class error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -22,23 +22,23 @@ const getMyClass = async (req, res) => {
 // Get students in teacher's class
 const getMyStudents = async (req, res) => {
   try {
-    const [classes] = await db.query(
-      'SELECT id FROM classes WHERE teacher_id = ?',
+    const classResult = await db.query(
+      'SELECT id FROM classes WHERE teacher_id = $1',
       [req.user.id]
     );
 
-    if (classes.length === 0) {
+    if (classResult.rows.length === 0) {
       return res.status(404).json({ error: 'No class assigned to you' });
     }
 
-    const classId = classes[0].id;
+    const classId = classResult.rows[0].id;
 
-    const [students] = await db.query(
-      'SELECT * FROM students WHERE class_id = ? ORDER BY roll_number',
+    const studentsResult = await db.query(
+      'SELECT * FROM students WHERE class_id = $1 ORDER BY roll_number',
       [classId]
     );
 
-    res.json(students);
+    res.json(studentsResult.rows);
   } catch (error) {
     console.error('Get students error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -50,27 +50,27 @@ const getAttendanceByDate = async (req, res) => {
   try {
     const { date } = req.params;
 
-    const [classes] = await db.query(
-      'SELECT id FROM classes WHERE teacher_id = ?',
+    const classResult = await db.query(
+      'SELECT id FROM classes WHERE teacher_id = $1',
       [req.user.id]
     );
 
-    if (classes.length === 0) {
+    if (classResult.rows.length === 0) {
       return res.status(404).json({ error: 'No class assigned to you' });
     }
 
-    const classId = classes[0].id;
+    const classId = classResult.rows[0].id;
 
-    const [attendance] = await db.query(`
+    const attendanceResult = await db.query(`
       SELECT s.id as student_id, s.name, s.roll_number, 
              COALESCE(ar.status, 'present') as status
       FROM students s
-      LEFT JOIN attendance_records ar ON s.id = ar.student_id AND ar.attendance_date = ?
-      WHERE s.class_id = ?
+      LEFT JOIN attendance_records ar ON s.id = ar.student_id AND ar.attendance_date = $1
+      WHERE s.class_id = $2
       ORDER BY s.roll_number
     `, [date, classId]);
 
-    res.json(attendance);
+    res.json(attendanceResult.rows);
   } catch (error) {
     console.error('Get attendance error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -79,6 +79,8 @@ const getAttendanceByDate = async (req, res) => {
 
 // Mark attendance for current date only
 const markAttendance = async (req, res) => {
+  const client = await db.connect();
+  
   try {
     const { attendance_date, attendance_records } = req.body;
 
@@ -93,24 +95,24 @@ const markAttendance = async (req, res) => {
     }
 
     // Verify teacher's class
-    const [classes] = await db.query(
-      'SELECT id FROM classes WHERE teacher_id = ?',
+    const classResult = await client.query(
+      'SELECT id FROM classes WHERE teacher_id = $1',
       [req.user.id]
     );
 
-    if (classes.length === 0) {
+    if (classResult.rows.length === 0) {
       return res.status(404).json({ error: 'No class assigned to you' });
     }
 
-    const classId = classes[0].id;
+    const classId = classResult.rows[0].id;
 
     // Begin transaction
-    await db.query('START TRANSACTION');
+    await client.query('BEGIN');
 
     try {
       // Delete existing attendance for this date
-      await db.query(
-        'DELETE FROM attendance_records WHERE student_id IN (SELECT id FROM students WHERE class_id = ?) AND attendance_date = ?',
+      await client.query(
+        'DELETE FROM attendance_records WHERE student_id IN (SELECT id FROM students WHERE class_id = $1) AND attendance_date = $2',
         [classId, attendance_date]
       );
 
@@ -119,30 +121,32 @@ const markAttendance = async (req, res) => {
         const { student_id, status } = record;
 
         // Verify student belongs to teacher's class
-        const [students] = await db.query(
-          'SELECT id FROM students WHERE id = ? AND class_id = ?',
+        const studentResult = await client.query(
+          'SELECT id FROM students WHERE id = $1 AND class_id = $2',
           [student_id, classId]
         );
 
-        if (students.length === 0) {
+        if (studentResult.rows.length === 0) {
           throw new Error(`Student ${student_id} not found in your class`);
         }
 
-        await db.query(
-          'INSERT INTO attendance_records (student_id, attendance_date, status, marked_by) VALUES (?, ?, ?, ?)',
+        await client.query(
+          'INSERT INTO attendance_records (student_id, attendance_date, status, marked_by) VALUES ($1, $2, $3, $4)',
           [student_id, attendance_date, status, req.user.id]
         );
       }
 
-      await db.query('COMMIT');
+      await client.query('COMMIT');
       res.json({ message: 'Attendance marked successfully' });
     } catch (error) {
-      await db.query('ROLLBACK');
+      await client.query('ROLLBACK');
       throw error;
     }
   } catch (error) {
     console.error('Mark attendance error:', error);
     res.status(500).json({ error: error.message || 'Internal server error' });
+  } finally {
+    client.release();
   }
 };
 

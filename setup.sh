@@ -13,14 +13,16 @@ if ! command -v node &> /dev/null; then
     exit 1
 fi
 
-# Check if MySQL is installed
-if ! command -v mysql &> /dev/null; then
-    echo "❌ MySQL is not installed"
-    echo "Please install MySQL from https://www.mysql.com/"
+# Check if PostgreSQL is installed
+if ! command -v psql &> /dev/null; then
+    echo "❌ PostgreSQL is not installed"
+    echo "Please install PostgreSQL by running:"
+    echo "  sudo apt update"
+    echo "  sudo apt install postgresql postgresql-contrib"
     exit 1
 fi
 
-echo "✅ Node.js and MySQL found"
+echo "✅ Node.js and PostgreSQL found"
 echo ""
 
 # Backend setup
@@ -29,8 +31,13 @@ cd backend
 
 if [ ! -f ".env" ]; then
     echo "Creating .env file..."
-    cp .env.example .env
-    echo "⚠️  Please edit backend/.env with your MySQL credentials"
+    cp .env.example .env 2>/dev/null || cat > .env << EOL
+PORT=5000
+SERVER_PORT=5000
+DATABASE_URL=postgresql://username:password@localhost:5432/school_attendance
+JWT_SECRET=change_this_to_a_random_secret_key
+EOL
+    echo "⚠️  Please edit backend/.env with your PostgreSQL credentials"
 fi
 
 echo "Installing backend dependencies..."
@@ -61,13 +68,16 @@ echo "======================================"
 echo ""
 echo "Next steps:"
 echo ""
-echo "1. Configure backend/.env with your MySQL credentials"
+echo "1. Configure backend/.env with your PostgreSQL credentials"
+echo "   DATABASE_URL=postgresql://username:password@localhost:5432/school_attendance"
 echo ""
 echo "2. Create and setup database:"
-echo "   mysql -u root -p"
+echo "   sudo -u postgres psql"
 echo "   CREATE DATABASE school_attendance;"
-echo "   exit"
-echo "   mysql -u root -p school_attendance < backend/database/schema.sql"
+echo "   CREATE USER your_username WITH PASSWORD 'your_password';"
+echo "   GRANT ALL PRIVILEGES ON DATABASE school_attendance TO your_username;"
+echo "   \\q"
+echo "   psql -U your_username -d school_attendance -f backend/database/schema.sql"
 echo ""
 echo "3. Start the backend server:"
 echo "   cd backend"

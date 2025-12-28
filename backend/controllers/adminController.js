@@ -11,23 +11,26 @@ const getAllStudents = async (req, res) => {
       SELECT s.*, c.standard, c.section, c.academic_year as class_academic_year
       FROM students s
       JOIN classes c ON s.class_id = c.id
-      WHERE c.school_id = ?
+      WHERE c.school_id = $1
     `;
     const params = [school_id];
+    let paramIndex = 2;
 
     if (academic_year) {
-      query += ' AND s.academic_year = ?';
+      query += ` AND s.academic_year = $${paramIndex}`;
       params.push(academic_year);
+      paramIndex++;
     }
     if (class_id) {
-      query += ' AND s.class_id = ?';
+      query += ` AND s.class_id = $${paramIndex}`;
       params.push(class_id);
+      paramIndex++;
     }
 
     query += ' ORDER BY c.standard, c.section, s.roll_number';
 
-    const [students] = await db.query(query, params);
-    res.json(students);
+    const result = await db.query(query, params);
+    res.json(result.rows);
   } catch (error) {
     console.error('Get students error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -62,14 +65,14 @@ const addStudent = async (req, res) => {
       }
     }
 
-    const [result] = await db.query(
-      'INSERT INTO students (roll_number, admission_no, name, class_id, academic_year, gender, parent_contact, parent_email) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    const result = await db.query(
+      'INSERT INTO students (roll_number, admission_no, name, class_id, academic_year, gender, parent_contact, parent_email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
       [roll_number, admission_no || null, name, class_id, academic_year, gender, parent_contact || null, parent_email]
     );
 
-    res.status(201).json({ message: 'Student added successfully', id: result.insertId });
+    res.status(201).json({ message: 'Student added successfully', id: result.rows[0].id });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') {
       return res.status(400).json({ error: 'Roll number already exists for this class and year' });
     }
     console.error('Add student error:', error);
@@ -106,18 +109,18 @@ const updateStudent = async (req, res) => {
       }
     }
 
-    const [result] = await db.query(
-      'UPDATE students SET roll_number = ?, admission_no = ?, name = ?, class_id = ?, academic_year = ?, gender = ?, parent_contact = ?, parent_email = ? WHERE id = ?',
+    const result = await db.query(
+      'UPDATE students SET roll_number = $1, admission_no = $2, name = $3, class_id = $4, academic_year = $5, gender = $6, parent_contact = $7, parent_email = $8 WHERE id = $9',
       [roll_number, admission_no || null, name, class_id, academic_year, gender, parent_contact || null, parent_email, id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Student not found' });
     }
 
     res.json({ message: 'Student updated successfully' });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') {
       return res.status(400).json({ error: 'Roll number already exists for this class and year' });
     }
     console.error('Update student error:', error);
@@ -129,9 +132,9 @@ const updateStudent = async (req, res) => {
 const deleteStudent = async (req, res) => {
   try {
     const { id } = req.params;
-    const [result] = await db.query('DELETE FROM students WHERE id = ?', [id]);
+    const result = await db.query('DELETE FROM students WHERE id = $1', [id]);
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Student not found' });
     }
 
@@ -151,9 +154,9 @@ const bulkDeleteStudents = async (req, res) => {
       return res.status(400).json({ error: 'Academic year is required' });
     }
 
-    const [result] = await db.query('DELETE FROM students WHERE academic_year = ?', [academic_year]);
+    const result = await db.query('DELETE FROM students WHERE academic_year = $1', [academic_year]);
 
-    res.json({ message: `Deleted ${result.affectedRows} students from academic year ${academic_year}` });
+    res.json({ message: `Deleted ${result.rowCount} students from academic year ${academic_year}` });
   } catch (error) {
     console.error('Bulk delete error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -164,14 +167,14 @@ const bulkDeleteStudents = async (req, res) => {
 const getAllTeachers = async (req, res) => {
   try {
     const school_id = req.user.school_id;
-    const [teachers] = await db.query(`
+    const result = await db.query(`
       SELECT u.*, c.id as class_id, c.standard, c.section, c.academic_year
       FROM users u
       LEFT JOIN classes c ON u.id = c.teacher_id
-      WHERE u.role = 'teacher' AND u.school_id = ?
+      WHERE u.role = 'teacher' AND u.school_id = $1
       ORDER BY u.full_name
     `, [school_id]);
-    res.json(teachers);
+    res.json(result.rows);
   } catch (error) {
     console.error('Get teachers error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -190,14 +193,14 @@ const addTeacher = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const [result] = await db.query(
-      'INSERT INTO users (school_id, username, password, full_name, email, role) VALUES (?, ?, ?, ?, ?, ?)',
+    const result = await db.query(
+      'INSERT INTO users (school_id, username, password, full_name, email, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
       [school_id, username, hashedPassword, full_name, email, 'teacher']
     );
 
-    res.status(201).json({ message: 'Teacher added successfully', id: result.insertId });
+    res.status(201).json({ message: 'Teacher added successfully', id: result.rows[0].id });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') {
       return res.status(400).json({ error: 'Username or email already exists' });
     }
     console.error('Add teacher error:', error);
@@ -211,27 +214,29 @@ const updateTeacher = async (req, res) => {
     const { id } = req.params;
     const { username, full_name, email, password } = req.body;
 
-    let query = 'UPDATE users SET username = ?, full_name = ?, email = ?';
+    let query = 'UPDATE users SET username = $1, full_name = $2, email = $3';
     const params = [username, full_name, email];
+    let paramIndex = 4;
 
     if (password) {
       const hashedPassword = await bcrypt.hash(password, 10);
-      query += ', password = ?';
+      query += `, password = $${paramIndex}`;
       params.push(hashedPassword);
+      paramIndex++;
     }
 
-    query += ' WHERE id = ? AND role = ?';
+    query += ` WHERE id = $${paramIndex} AND role = $${paramIndex + 1}`;
     params.push(id, 'teacher');
 
-    const [result] = await db.query(query, params);
+    const result = await db.query(query, params);
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Teacher not found' });
     }
 
     res.json({ message: 'Teacher updated successfully' });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') {
       return res.status(400).json({ error: 'Username or email already exists' });
     }
     console.error('Update teacher error:', error);
@@ -243,9 +248,9 @@ const updateTeacher = async (req, res) => {
 const deleteTeacher = async (req, res) => {
   try {
     const { id } = req.params;
-    const [result] = await db.query('DELETE FROM users WHERE id = ? AND role = ?', [id, 'teacher']);
+    const result = await db.query('DELETE FROM users WHERE id = $1 AND role = $2', [id, 'teacher']);
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Teacher not found' });
     }
 
@@ -260,17 +265,17 @@ const deleteTeacher = async (req, res) => {
 const getAllClasses = async (req, res) => {
   try {
     const school_id = req.user.school_id;
-    const [classes] = await db.query(`
+    const result = await db.query(`
       SELECT c.*, u.full_name as teacher_name, u.username as teacher_username,
              COUNT(s.id) as student_count
       FROM classes c
       LEFT JOIN users u ON c.teacher_id = u.id
       LEFT JOIN students s ON c.id = s.class_id
-      WHERE c.school_id = ?
-      GROUP BY c.id
+      WHERE c.school_id = $1
+      GROUP BY c.id, u.full_name, u.username
       ORDER BY c.academic_year DESC, c.standard, c.section
     `, [school_id]);
-    res.json(classes);
+    res.json(result.rows);
   } catch (error) {
     console.error('Get classes error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -287,14 +292,14 @@ const addClass = async (req, res) => {
       return res.status(400).json({ error: 'Standard, section, and academic year are required' });
     }
 
-    const [result] = await db.query(
-      'INSERT INTO classes (school_id, standard, section, academic_year, teacher_id) VALUES (?, ?, ?, ?, ?)',
+    const result = await db.query(
+      'INSERT INTO classes (school_id, standard, section, academic_year, teacher_id) VALUES ($1, $2, $3, $4, $5) RETURNING id',
       [school_id, standard, section, academic_year, teacher_id || null]
     );
 
-    res.status(201).json({ message: 'Class added successfully', id: result.insertId });
+    res.status(201).json({ message: 'Class added successfully', id: result.rows[0].id });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') {
       if (error.message.includes('teacher_id')) {
         return res.status(400).json({ error: 'This teacher is already assigned to another class' });
       }
@@ -311,18 +316,18 @@ const updateClass = async (req, res) => {
     const { id } = req.params;
     const { standard, section, academic_year, teacher_id } = req.body;
 
-    const [result] = await db.query(
-      'UPDATE classes SET standard = ?, section = ?, academic_year = ?, teacher_id = ? WHERE id = ?',
+    const result = await db.query(
+      'UPDATE classes SET standard = $1, section = $2, academic_year = $3, teacher_id = $4 WHERE id = $5',
       [standard, section, academic_year, teacher_id || null, id]
     );
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Class not found' });
     }
 
     res.json({ message: 'Class updated successfully' });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') {
       if (error.message.includes('teacher_id')) {
         return res.status(400).json({ error: 'This teacher is already assigned to another class' });
       }
@@ -337,9 +342,9 @@ const updateClass = async (req, res) => {
 const deleteClass = async (req, res) => {
   try {
     const { id } = req.params;
-    const [result] = await db.query('DELETE FROM classes WHERE id = ?', [id]);
+    const result = await db.query('DELETE FROM classes WHERE id = $1', [id]);
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Class not found' });
     }
 
@@ -355,18 +360,18 @@ const getAllHolidays = async (req, res) => {
   try {
     const { academic_year } = req.query;
     const school_id = req.user.school_id;
-    let query = 'SELECT * FROM holidays WHERE school_id = ?';
+    let query = 'SELECT * FROM holidays WHERE school_id = $1';
     const params = [school_id];
 
     if (academic_year) {
-      query += ' AND academic_year = ?';
+      query += ' AND academic_year = $2';
       params.push(academic_year);
     }
 
     query += ' ORDER BY holiday_date';
 
-    const [holidays] = await db.query(query, params);
-    res.json(holidays);
+    const result = await db.query(query, params);
+    res.json(result.rows);
   } catch (error) {
     console.error('Get holidays error:', error);
     res.status(500).json({ error: 'Internal server error' });
@@ -383,14 +388,14 @@ const addHoliday = async (req, res) => {
       return res.status(400).json({ error: 'Date, description, and academic year are required' });
     }
 
-    const [result] = await db.query(
-      'INSERT INTO holidays (school_id, holiday_date, description, academic_year) VALUES (?, ?, ?, ?)',
+    const result = await db.query(
+      'INSERT INTO holidays (school_id, holiday_date, description, academic_year) VALUES ($1, $2, $3, $4) RETURNING id',
       [school_id, holiday_date, description, academic_year]
     );
 
-    res.status(201).json({ message: 'Holiday added successfully', id: result.insertId });
+    res.status(201).json({ message: 'Holiday added successfully', id: result.rows[0].id });
   } catch (error) {
-    if (error.code === 'ER_DUP_ENTRY') {
+    if (error.code === '23505') {
       return res.status(400).json({ error: 'Holiday already exists for this date and year' });
     }
     console.error('Add holiday error:', error);
@@ -402,9 +407,9 @@ const addHoliday = async (req, res) => {
 const deleteHoliday = async (req, res) => {
   try {
     const { id } = req.params;
-    const [result] = await db.query('DELETE FROM holidays WHERE id = ?', [id]);
+    const result = await db.query('DELETE FROM holidays WHERE id = $1', [id]);
 
-    if (result.affectedRows === 0) {
+    if (result.rowCount === 0) {
       return res.status(404).json({ error: 'Holiday not found' });
     }
 
@@ -438,21 +443,21 @@ const editPastAttendance = async (req, res) => {
     }
 
     // Check if record exists
-    const [existing] = await db.query(
-      'SELECT id FROM attendance_records WHERE student_id = ? AND attendance_date = ?',
+    const existing = await db.query(
+      'SELECT id FROM attendance_records WHERE student_id = $1 AND attendance_date = $2',
       [student_id, attendance_date]
     );
 
-    if (existing.length > 0) {
+    if (existing.rows.length > 0) {
       // Update existing record
       await db.query(
-        'UPDATE attendance_records SET status = ?, marked_by = ? WHERE student_id = ? AND attendance_date = ?',
+        'UPDATE attendance_records SET status = $1, marked_by = $2 WHERE student_id = $3 AND attendance_date = $4',
         [status, req.user.id, student_id, attendance_date]
       );
     } else {
       // Create new record
       await db.query(
-        'INSERT INTO attendance_records (student_id, attendance_date, status, marked_by) VALUES (?, ?, ?, ?)',
+        'INSERT INTO attendance_records (student_id, attendance_date, status, marked_by) VALUES ($1, $2, $3, $4)',
         [student_id, attendance_date, status, req.user.id]
       );
     }
@@ -479,16 +484,16 @@ const promoteStudents = async (req, res) => {
     }
 
     // Get current class details
-    const [currentClassResult] = await db.query(
-      'SELECT standard, section, academic_year FROM classes WHERE id = ? AND school_id = ?',
+    const currentClassResult = await db.query(
+      'SELECT standard, section, academic_year FROM classes WHERE id = $1 AND school_id = $2',
       [current_class_id, school_id]
     );
 
-    if (!currentClassResult || currentClassResult.length === 0) {
+    if (!currentClassResult || currentClassResult.rows.length === 0) {
       return res.status(404).json({ error: 'Class not found' });
     }
 
-    const currentClass = currentClassResult[0];
+    const currentClass = currentClassResult.rows[0];
     const currentStandard = parseInt(currentClass.standard);
     const currentSection = currentClass.section;
     const currentAcademicYear = currentClass.academic_year;
@@ -508,38 +513,38 @@ const promoteStudents = async (req, res) => {
     }
 
     // Find or create the target class (next standard, same section, next academic year)
-    let [targetClassResult] = await db.query(
-      'SELECT id FROM classes WHERE standard = ? AND section = ? AND academic_year = ? AND school_id = ?',
+    let targetClassResult = await db.query(
+      'SELECT id FROM classes WHERE standard = $1 AND section = $2 AND academic_year = $3 AND school_id = $4',
       [nextStandard, currentSection, nextAcademicYear, school_id]
     );
 
     let targetClassId;
-    if (targetClassResult.length === 0) {
+    if (targetClassResult.rows.length === 0) {
       // Create the new class
-      const [insertResult] = await db.query(
-        'INSERT INTO classes (standard, section, academic_year, school_id) VALUES (?, ?, ?, ?)',
+      const insertResult = await db.query(
+        'INSERT INTO classes (standard, section, academic_year, school_id) VALUES ($1, $2, $3, $4) RETURNING id',
         [nextStandard, currentSection, nextAcademicYear, school_id]
       );
-      targetClassId = insertResult.insertId;
+      targetClassId = insertResult.rows[0].id;
     } else {
-      targetClassId = targetClassResult[0].id;
+      targetClassId = targetClassResult.rows[0].id;
     }
 
     // Verify all students belong to this school and current class
-    const [students] = await db.query(
+    const students = await db.query(
       `SELECT s.id FROM students s 
        JOIN classes c ON s.class_id = c.id 
-       WHERE s.id IN (?) AND c.school_id = ? AND s.class_id = ?`,
+       WHERE s.id = ANY($1) AND c.school_id = $2 AND s.class_id = $3`,
       [student_ids, school_id, current_class_id]
     );
 
-    if (students.length !== student_ids.length) {
+    if (students.rows.length !== student_ids.length) {
       return res.status(403).json({ error: 'Some students do not belong to the selected class' });
     }
 
     // Update class and academic year for selected students
     await db.query(
-      'UPDATE students SET class_id = ?, academic_year = ? WHERE id IN (?)',
+      'UPDATE students SET class_id = $1, academic_year = $2 WHERE id = ANY($3)',
       [targetClassId, nextAcademicYear, student_ids]
     );
 
