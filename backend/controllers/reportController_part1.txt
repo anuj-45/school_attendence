@@ -1,0 +1,95 @@
+const db = require('../config/db');
+
+// Calculate attendance for a student
+const getStudentAttendance = async (req, res) => {
+  try {
+    const { student_id } = req.params;
+    const { start_date, end_date, academic_year } = req.query;
+
+    if (!start_date || !end_date) {
+      return res.status(400).json({ error: 'Start date and end date are required' });
+    }
+
+    // Get student info
+    const studentResult = await db.query(
+      'SELECT s.*, c.standard, c.section FROM students s JOIN classes c ON s.class_id = c.id WHERE s.id = $1',
+      [student_id]
+    );
+
+    if (studentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+
+    const student = studentResult.rows[0];
+
+    // Get attendance records
+    const recordsResult = await db.query(
+      'SELECT status, COUNT(*) as count FROM attendance_records WHERE student_id = $1 AND attendance_date BETWEEN $2 AND $3 GROUP BY status',
+      [student_id, start_date, end_date]
+    );
+
+    // Get holidays count
+    const yearToUse = academic_year || student.academic_year;
+    const holidaysResult = await db.query(
+      'SELECT COUNT(*) as count FROM holidays WHERE academic_year = $1 AND holiday_date BETWEEN $2 AND $3',
+      [yearToUse, start_date, end_date]
+    );
+
+    const holidayCount = parseInt(holidaysResult.rows[0].count);
+
+    // Calculate total days
+    const startDate = new Date(start_date);
+    const endDate = new Date(end_date);
+    const totalDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    const totalSchoolDays = totalDays - holidayCount;
+
+    // Calculate attendance statistics
+    let presentCount = 0;
+    let lateCount = 0;
+    let absentCount = 0;
+
+    recordsResult.rows.forEach(record => {
+      const count = parseInt(record.count);
+      if (record.status === 'present') presentCount = count;
+      else if (record.status === 'late') lateCount = count;
+      else if (record.status === 'absent') absentCount = count;
+    });
+
+    const totalMarkedDays = presentCount + lateCount + absentCount;
+    const unmarkedDays = totalSchoolDays - totalMarkedDays;
+    
+    // Unmarked days are considered present
+    const totalPresentDays = presentCount + lateCount + unmarkedDays;
+    const attendancePercentage = totalSchoolDays > 0 ? ((totalPresentDays / totalSchoolDays) * 100).toFixed(2) : 0;
+    const latePercentage = totalSchoolDays > 0 ? ((lateCount / totalSchoolDays) * 100).toFixed(2) : 0;
+
+    res.json({
+      student: {
+        id: student.id,
+        name: student.name,
+        roll_number: student.roll_number,
+        standard: student.standard,
+        section: student.section
+      },
+      period: {
+        start_date,
+        end_date,
+        total_days: totalDays,
+        holidays: holidayCount,
+        total_school_days: totalSchoolDays
+      },
+      attendance: {
+        present: presentCount,
+        late: lateCount,
+        absent: absentCount,
+        unmarked: unmarkedDays,
+        total_present: totalPresentDays,
+        attendance_percentage: parseFloat(attendancePercentage),
+        late_percentage: parseFloat(latePercentage)
+      }
+    });
+  } catch (error) {
+    console.error('Get student attendance error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
